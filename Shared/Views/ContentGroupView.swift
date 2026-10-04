@@ -66,16 +66,16 @@ struct ContentGroupView<Provider: ContentGroupProvider>: View {
             )
             #endif
             .scrollIndicators(.hidden)
-            .refreshable {
-                await viewModel.background.refresh()
-            }
-            .onReceive(tabItemSelected) { event in
-                if event.isRepeat, event.isRoot {
-                    withAnimation {
-                        proxy.scrollTo("top", anchor: .top)
+                .refreshable {
+                    await viewModel.background.refresh()
+                }
+                .onReceive(tabItemSelected) { event in
+                    if event.isRepeat, event.isRoot {
+                        withAnimation {
+                            proxy.scrollTo("top", anchor: .top)
+                        }
                     }
                 }
-            }
         }
     }
 
@@ -98,12 +98,12 @@ struct ContentGroupView<Provider: ContentGroupProvider>: View {
             case .error:
                 viewModel.error.map(ErrorView.init)
                     #if os(tvOS)
-                        .coordinatedFocus(.fallback)
+                    .coordinatedFocus(.fallback)
                     #endif
             case .initial, .refreshing:
                 ProgressView()
                     #if os(tvOS)
-                        .coordinatedFocus(.placeholder)
+                    .coordinatedFocus(.placeholder)
                     #endif
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .ignoresSafeArea(edges: .all)
@@ -117,6 +117,8 @@ struct ContentGroupView<Provider: ContentGroupProvider>: View {
         #elseif os(tvOS)
         .toolbar(router.isRootOfPath ? .hidden : .automatic, for: .navigationBar)
         #endif
+        .onAppear { viewModel.didAppear() }
+        .onDisappear { viewModel.didDisappear() }
         .onFirstAppear {
             viewModel.refresh()
         }

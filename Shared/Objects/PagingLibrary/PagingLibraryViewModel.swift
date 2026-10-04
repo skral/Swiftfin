@@ -11,6 +11,26 @@ import Foundation
 import IdentifiedCollections
 import JellyfinAPI
 
+private final class PlaybackLibraryRefreshCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var canceled = false
+
+    var isCancelled: Bool {
+        lock.withLock { canceled }
+    }
+
+    func cancel() {
+        lock.withLock { canceled = true }
+    }
+}
+
+private enum PlaybackLibraryRefreshContext {
+    @TaskLocal
+    static var requestID: UUID?
+    @TaskLocal
+    static var cancellation: PlaybackLibraryRefreshCancellation?
+}
+
 let defaultPagingLibraryPageSize = 50
 
 @MainActor
@@ -82,6 +102,8 @@ class PagingLibraryViewModel<Library: PagingLibrary>: ViewModel, @MainActor Iden
     let library: Library
     let pageSize: Int
 
+    private var playbackRefreshRequestID: UUID?
+    private var successfulPlaybackRefreshID: UUID?
     private var hasNextPage: Bool
     private var hasNextSearchPage: Bool
     private var itemUserDataRefreshTask: AnyCancellable?
@@ -150,6 +172,41 @@ class PagingLibraryViewModel<Library: PagingLibrary>: ViewModel, @MainActor Iden
                 self?.search(query: query)
             }
             .store(in: &cancellables)
+    }
+
+    func refreshForPlayback() async -> Bool {
+        guard !Task.isCancelled,
+              playbackRefreshRequestID == nil,
+              !background.is(.refreshing),
+              state != .refreshing
+        else { return false }
+
+        let requestID = UUID()
+        let cancellation = PlaybackLibraryRefreshCancellation()
+        playbackRefreshRequestID = requestID
+        defer { playbackRefreshRequestID = nil }
+
+        do {
+            try await withTaskCancellationHandler {
+                try await PlaybackLibraryRefreshContext.$requestID.withValue(requestID) {
+                    try await PlaybackLibraryRefreshContext.$cancellation.withValue(cancellation) {
+                        try await core.send(\.refresh, background: true)
+                    }
+                }
+            } onCancel: {
+                // StateCore uses an unstructured task. Mark cancellation synchronously
+                // so a response cannot be applied before its main-actor cancel runs.
+                cancellation.cancel()
+                Task { @MainActor [weak self] in
+                    guard let self, playbackRefreshRequestID == requestID else { return }
+                    core.cancel(action: \.refresh)
+                }
+            }
+        } catch {
+            return false
+        }
+
+        return !Task.isCancelled && successfulPlaybackRefreshID == requestID
     }
 
     func refreshForEnvironmentChange() {
@@ -259,28 +316,31 @@ class PagingLibraryViewModel<Library: PagingLibrary>: ViewModel, @MainActor Iden
     private func __actuallyGetNextPage() async throws {
         guard hasNextPage else { return }
 
-        let nextPageElements = try await retrievePage(offset: elements.count)
+        let page = try await retrievePage(offset: elements.count)
 
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled, userSession === page.userSession else { return }
 
-        hasNextPage = !(nextPageElements.count < pageSize)
-        elements.append(contentsOf: nextPageElements)
+        hasNextPage = !(page.elements.count < pageSize)
+        elements.append(contentsOf: page.elements)
     }
 
     private func replaceElements() async throws {
-        let newElements = try await retrievePage(offset: 0)
+        let page = try await retrievePage(offset: 0)
 
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled,
+              PlaybackLibraryRefreshContext.cancellation?.isCancelled != true,
+              userSession === page.userSession
+        else { return }
 
-        hasNextPage = !(newElements.count < pageSize)
-        elements = IdentifiedArray(newElements, uniquingIDsWith: { existing, _ in existing })
+        hasNextPage = !(page.elements.count < pageSize)
+        elements = IdentifiedArray(page.elements, uniquingIDsWith: { existing, _ in existing })
+        successfulPlaybackRefreshID = PlaybackLibraryRefreshContext.requestID
     }
 
-    private func retrievePage(offset: Int) async throws -> [Element] {
-        try await library.retrievePage(
-            environment: environment,
-            pageState: pageState(offset: offset, pageSize: pageSize)
-        )
+    private func retrievePage(offset: Int) async throws -> (elements: [Element], userSession: UserSession) {
+        let pageState = try pageState(offset: offset, pageSize: pageSize)
+        let elements = try await library.retrievePage(environment: environment, pageState: pageState)
+        return (elements, pageState.userSession)
     }
 
     @Function(\Action.Cases.search)
