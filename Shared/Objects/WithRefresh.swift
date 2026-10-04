@@ -15,6 +15,9 @@ protocol WithRefresh {
 
     func refresh()
     func refresh() async
+
+    /// True only when a fresh authoritative retrieval was applied.
+    func refreshForPlayback() async -> Bool
 }
 
 extension WithRefresh where Background == Empty {
@@ -22,5 +25,11 @@ extension WithRefresh where Background == Empty {
     var background: Empty {
         get { .init() }
         set {}
+    }
+}
+
+extension WithRefresh {
+    func refreshForPlayback() async -> Bool {
+        false
     }
 }

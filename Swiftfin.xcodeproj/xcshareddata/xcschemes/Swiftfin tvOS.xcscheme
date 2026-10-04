@@ -28,6 +28,14 @@
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       shouldUseLaunchSchemeArgsEnv = "YES">
       <Testables>
+         <TestableReference skipped = "NO">
+            <BuildableReference BuildableIdentifier = "primary"
+               BlueprintIdentifier = "F00410000000000000000001"
+               BuildableName = "Swiftfin tvOSTests.xctest"
+               BlueprintName = "Swiftfin tvOSTests"
+               ReferencedContainer = "container:Swiftfin.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
    </TestAction>
    <LaunchAction

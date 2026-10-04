@@ -19,6 +19,11 @@ extension Container {
     }
 }
 
+struct PlaybackStopReportOrigin: Equatable, Sendable {
+    let serverID: String
+    let userID: String
+}
+
 enum Notifications {
 
     typealias Keys = _AnyKey
@@ -113,7 +118,7 @@ extension Notifications.Key {
         Key("didChangeServerConnection")
     }
 
-    static var didSendStopReport: Key<Void> {
+    static var didSendStopReport: Key<PlaybackStopReportOrigin> {
         Key("didSendStopReport")
     }
 
