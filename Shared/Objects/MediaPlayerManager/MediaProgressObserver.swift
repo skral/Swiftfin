@@ -141,17 +141,24 @@ class MediaProgressObserver: ViewModel, MediaPlayerObserver {
         guard Defaults[.sendProgressReports] else { return }
         #endif
 
-        Task {
-            var info = PlaybackStopInfo()
-            info.itemID = item.baseItem.id
-            info.liveStreamID = item.mediaSource.liveStreamID
-            info.mediaSourceID = item.mediaSource.id
-            info.playSessionID = item.playSessionID
-            info.positionTicks = seconds?.ticks
-            info.sessionID = item.playSessionID
+        guard let userSession else { return }
+        let client = userSession.client
+        let origin = PlaybackStopReportOrigin(serverID: userSession.server.id, userID: userSession.user.id)
 
-            let request = Paths.reportPlaybackStopped(info)
-            try await send(request)
+        var info = PlaybackStopInfo()
+        info.itemID = item.baseItem.id
+        info.liveStreamID = item.mediaSource.liveStreamID
+        info.mediaSourceID = item.mediaSource.id
+        info.playSessionID = item.playSessionID
+        info.positionTicks = seconds?.ticks
+        info.sessionID = item.playSessionID
+        let request = Paths.reportPlaybackStopped(info)
+
+        // The completion belongs to this playback session, even if the player
+        // disappears or the signed-in user changes while the request is pending.
+        Task {
+            try await client.send(request)
+            Notifications[.didSendStopReport].post(origin)
         }
     }
 
