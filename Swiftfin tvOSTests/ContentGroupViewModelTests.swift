@@ -70,8 +70,15 @@ private final class HomeRefreshURLProtocol: URLProtocol, @unchecked Sendable {
         if isNextUp { Self.lock.withLock { Self.state.nextUpRequests += 1 } }
         let isResume = request.url!.path.contains("Resume")
         if isResume { Self.lock.withLock { Self.state.resumeRequests += 1 } }
-        let items = request.url!.path == "/Items" ? Self.recentlyAddedItems : isResume ? Self.resumeItems : isNextUp && !Self.nextUp
-            .isEmpty ? "[{\"Id\":\"\(Self.nextUp)\",\"Type\":\"Episode\"}]" : "[]"
+        let items: String = if request.url!.path == "/Items" {
+            Self.recentlyAddedItems
+        } else if isResume {
+            Self.resumeItems
+        } else if isNextUp, !Self.nextUp.isEmpty {
+            "[{\"Id\":\"\(Self.nextUp)\",\"Type\":\"Episode\"}]"
+        } else {
+            "[]"
+        }
         let data = Data("{\"Items\":\(items),\"TotalRecordCount\":0}".utf8)
         responseBody = data
         if isNextUp, let onNextUp = Self.onNextUp {
@@ -337,6 +344,61 @@ final class ContentGroupViewModelTests: XCTestCase {
         XCTAssertEqual(nextIDs(home), ["episode-4"])
     }
 
+    func testStopDuringFullRefreshRunsTrailingRetrieval() async {
+        let home = await home()
+        home.didAppear()
+        let requested = expectation(description: "Full group retrieval started")
+        var continuation: CheckedContinuation<[any ContentGroup], Error>?
+        home.provider.makeGroupsOverride = {
+            try await withCheckedThrowingContinuation {
+                continuation = $0
+                requested.fulfill()
+            }
+        }
+        let full = Task { await home.refresh() }
+        await fulfillment(of: [requested], timeout: 2)
+        HomeRefreshURLProtocol.nextUp = "episode-4"
+        Notifications[.didSendStopReport].post(origin)
+        continuation?.resume(returning: home.provider.content)
+        await full.value
+        await settle(home, minimumRequests: 3)
+        XCTAssertEqual(nextIDs(home), ["episode-4"])
+        XCTAssertEqual(HomeRefreshURLProtocol.nextUpRequests, 3)
+    }
+
+    func testFailedFullRefreshRetainsCandidatesForPlaybackRetrieval() async {
+        let home = await home()
+        home.didAppear()
+        home.provider.makeGroupsOverride = { throw URLError(.badServerResponse) }
+        await home.refresh()
+        HomeRefreshURLProtocol.nextUp = "episode-4"
+        Notifications[.didSendStopReport].post(origin)
+        home.refreshIfNeeded(sinceLastDisappear: 5)
+        await settle(home)
+        XCTAssertEqual(nextIDs(home), ["episode-4"])
+        XCTAssertEqual(HomeRefreshURLProtocol.nextUpRequests, 2)
+    }
+
+    func testDuplicateAppearanceHooksDoNotRetryFailedPlaybackPass() async {
+        let home = await home()
+        let requested = expectation(description: "Playback retrieval fails once")
+        var hasRequested = false
+        HomeRefreshURLProtocol.onNextUp = { request in
+            if !hasRequested {
+                hasRequested = true
+                requested.fulfill()
+            }
+            request.fail()
+        }
+        Notifications[.didSendStopReport].post(origin)
+        home.didAppear()
+        home.refreshIfNeeded(sinceLastDisappear: 5)
+        await fulfillment(of: [requested], timeout: 2)
+        await settle(home)
+        try? await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(HomeRefreshURLProtocol.nextUpRequests, 2)
+    }
+
     func testOrdinaryItemDataSignalKeepsShortReturnRefreshBehavior() async {
         let home = await home()
         HomeRefreshURLProtocol.nextUp = "episode-4"
@@ -353,7 +415,10 @@ private struct HomeRefreshProvider: ContentGroupProvider {
     let id = "default-content-group-provider"
     let displayTitle = "Home"
     let content: [any ContentGroup]
+    var makeGroupsOverride: (@MainActor () async throws -> [any ContentGroup])?
+
     func makeGroups(environment: Empty) async throws -> [any ContentGroup] {
-        content
+        if let makeGroupsOverride { return try await makeGroupsOverride() }
+        return content
     }
 }

@@ -107,6 +107,7 @@ final class ContentGroupViewModel<Provider: ContentGroupProvider>: ViewModel {
     }
 
     func didAppear() {
+        guard !isVisible else { return }
         isVisible = true
         synchronizePlaybackSession()
         schedulePlaybackRefresh(retryIfBusy: true)
@@ -261,7 +262,6 @@ final class ContentGroupViewModel<Provider: ContentGroupProvider>: ViewModel {
     private func fullRefresh() async throws {
 
         self.groups = []
-        self.candidateGroups = []
 
         let session = userSession
         let newGroups = try await provider.makeGroups(environment: provider.environment)
