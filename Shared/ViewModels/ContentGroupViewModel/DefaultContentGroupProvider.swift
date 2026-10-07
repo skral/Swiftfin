@@ -44,12 +44,10 @@ struct DefaultContentGroupProvider: ContentGroupProvider {
     private func _makeGroups(userViews: [BaseItemDto]) -> [any ContentGroup] {
 
         #if os(tvOS)
-        let cinematicSelectionContentGroup = CinematicSelectionContentGroup(
+        CinematicSelectionContentGroup(
             resumeLibrary: ResumeItemsLibrary(mediaTypes: [.video]),
-            recentlyAddedLibrary: RecentlyAddedLibrary()
+            nextUpLibrary: NextUpLibrary()
         )
-
-        cinematicSelectionContentGroup
         #else
         PosterGroup(
             library: ResumeItemsLibrary(mediaTypes: [.video]),
@@ -57,16 +55,16 @@ struct DefaultContentGroupProvider: ContentGroupProvider {
             posterSize: .medium,
             _viewContext: .isInResume
         )
-        #endif
 
         PosterGroup(
             library: NextUpLibrary()
         )
+        #endif
 
         if Defaults[.Customization.Home.showRecentlyAdded] {
             #if os(tvOS)
-            CinematicRecentlyAddedContentGroup(
-                viewModel: cinematicSelectionContentGroup.viewModel
+            PosterGroup(
+                library: RecentlyAddedLibrary()
             )
             #else
             PosterGroup(

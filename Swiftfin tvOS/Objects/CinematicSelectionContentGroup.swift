@@ -16,16 +16,13 @@ struct CinematicSelectionContentGroup: ContentGroup {
     let viewModel: CinematicSelectionContentGroupViewModel
 
     var _shouldBeResolved: Bool {
-        viewModel.hasContent
+        viewModel.elements.isNotEmpty
     }
 
-    init(
-        resumeLibrary: ResumeItemsLibrary,
-        recentlyAddedLibrary: RecentlyAddedLibrary
-    ) {
+    init(resumeLibrary: ResumeItemsLibrary, nextUpLibrary: NextUpLibrary) {
         self.viewModel = CinematicSelectionContentGroupViewModel(
             resumeLibrary: resumeLibrary,
-            recentlyAddedLibrary: recentlyAddedLibrary
+            nextUpLibrary: nextUpLibrary
         )
     }
 
@@ -72,11 +69,8 @@ struct CinematicSelectionContentGroup: ContentGroup {
         }
 
         var body: some View {
-            let items = viewModel.hasResumeItems ? viewModel.resumeViewModel.elements.elements : viewModel.recentlyAddedViewModel.elements
-                .elements
-
             CinematicItemSelector(
-                items: items
+                items: viewModel.elements
             ) { item in
                 router.route(to: .item(item: item))
             } topContent: { item in
@@ -102,32 +96,16 @@ struct CinematicSelectionContentGroup: ContentGroup {
     }
 }
 
-struct CinematicRecentlyAddedContentGroup: ContentGroup {
-
-    let id = "cinematic-recently-added"
-    let viewModel: CinematicSelectionContentGroupViewModel
-
-    var _shouldBeResolved: Bool {
-        viewModel.hasResumeItems && viewModel.recentlyAddedViewModel.elements.isNotEmpty
-    }
-
-    func body(with viewModel: CinematicSelectionContentGroupViewModel) -> some View {
-        PosterHStackLibrarySection(
-            viewModel: viewModel.recentlyAddedViewModel,
-            group: viewModel.recentlyAddedGroup
-        )
-    }
-}
-
 final class CinematicSelectionContentGroupViewModel: ViewModel, WithRefresh {
 
     typealias Background = CinematicSelectionContentGroupViewModel
 
-    let recentlyAddedGroup: PosterGroup<RecentlyAddedLibrary>
     let resumeViewModel: PagingLibraryViewModel<ResumeItemsLibrary>
+    let nextUpViewModel: PagingLibraryViewModel<NextUpLibrary>
 
-    var recentlyAddedViewModel: PagingLibraryViewModel<RecentlyAddedLibrary> {
-        recentlyAddedGroup.viewModel
+    var elements: [BaseItemDto] {
+        (resumeViewModel.elements.elements + nextUpViewModel.elements.elements)
+            .uniqued { $0.id }
     }
 
     var background: CinematicSelectionContentGroupViewModel {
@@ -135,25 +113,13 @@ final class CinematicSelectionContentGroupViewModel: ViewModel, WithRefresh {
         set {}
     }
 
-    var hasResumeItems: Bool {
-        resumeViewModel.elements.isNotEmpty
-    }
-
-    var hasContent: Bool {
-        hasResumeItems || recentlyAddedViewModel.elements.isNotEmpty
-    }
-
-    init(
-        resumeLibrary: ResumeItemsLibrary,
-        recentlyAddedLibrary: RecentlyAddedLibrary
-    ) {
+    init(resumeLibrary: ResumeItemsLibrary, nextUpLibrary: NextUpLibrary) {
         self.resumeViewModel = PagingLibraryViewModel(library: resumeLibrary, pageSize: 20)
-        self.recentlyAddedGroup = PosterGroup(library: recentlyAddedLibrary)
-
+        self.nextUpViewModel = PagingLibraryViewModel(library: nextUpLibrary, pageSize: 20)
         super.init()
 
         resumeViewModel.objectWillChange
-            .merge(with: recentlyAddedViewModel.objectWillChange)
+            .merge(with: nextUpViewModel.objectWillChange)
             .sink { [weak self] _ in
                 self?.objectWillChange.send()
             }
@@ -161,23 +127,20 @@ final class CinematicSelectionContentGroupViewModel: ViewModel, WithRefresh {
     }
 
     func refresh() {
-        Task {
-            await refresh()
-        }
+        Task { await refresh() }
     }
 
     func refreshForPlayback() async -> Bool {
         async let resume = resumeViewModel.refreshForPlayback()
-        async let recentlyAdded = recentlyAddedViewModel.refreshForPlayback()
-        let results = await (resume, recentlyAdded)
+        async let nextUp = nextUpViewModel.refreshForPlayback()
+        let results = await (resume, nextUp)
         return results.0 && results.1
     }
 
     func refresh() async {
         async let resume: Void = resumeViewModel.refresh()
-        async let recentlyAdded: Void = recentlyAddedViewModel.refresh()
-
-        _ = await (resume, recentlyAdded)
+        async let nextUp: Void = nextUpViewModel.refresh()
+        _ = await (resume, nextUp)
     }
 }
 
