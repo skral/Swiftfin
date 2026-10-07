@@ -82,7 +82,10 @@ final class SelectUserViewModel: ViewModel {
 
     @Function(\Action.Cases.signIn)
     private func _signIn(_ user: UserState, _ pin: String) throws {
-        if user.accessPolicy == .requirePin, let storedPin = keychain.get("\(user.id)-pin") {
+        if user.accessPolicy == .requirePin {
+            guard let storedPin = keychain.get("\(user.id)-pin"), storedPin.isNotEmpty else {
+                throw UserSessionError.missingStoredCredentials(userID: user.id)
+            }
             guard pin == storedPin else {
                 throw ErrorMessage(L10n.incorrectPinForUser(user.username))
             }

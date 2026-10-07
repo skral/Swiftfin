@@ -114,12 +114,10 @@ extension SwiftfinStore {
             )
             try replaceSQLiteStore(at: sourceStoreURL, with: temporaryStoreURL)
 
-            // Manually migrate SQL to Defaults, knowingly
-            // only keeping these values
-            #if os(tvOS)
-            StoredValues[.Server.servers] = legacyStates.servers
-            StoredValues[.User.users] = legacyStates.users
-            #endif
+            // tvOS catalogs live in current-user defaults. Do not hydrate
+            // them from a legacy device-wide SQLite store whose profile
+            // ownership cannot be established. Keep the migrated SQL intact.
+            // iOS continues using its existing SQLite migration.
         }
     }
 
@@ -363,8 +361,10 @@ extension SwiftfinStore {
     }
 
     static func persistAccessTokenToKeychain(userID: String, accessToken: String?) {
+        #if !os(tvOS)
         guard let accessToken else { return }
         Container.shared.keychainService().set(accessToken, forKey: "\(userID)-accessToken")
+        #endif
     }
 
     static func transformServerURLs(_ uris: Set<String>) -> Set<URL> {

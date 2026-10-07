@@ -11,8 +11,8 @@ import Nuke
 
 // TODO: when `Storage` is implemented, could allow limits on sizes
 
-// Note: For better support with multi-url servers, ignore the
-//       host and only use path + query which has ids and tags
+// iOS shares artwork across a server's alternative URLs. tvOS also includes
+// the URL origin to prevent different servers from sharing an image key.
 
 extension DataCache {
     enum Swiftfin {}

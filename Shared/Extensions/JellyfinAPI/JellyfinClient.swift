@@ -24,7 +24,13 @@ extension JellyfinClient.Configuration {
             .unicodeScalars
             .filter { CharacterSet.urlQueryAllowed.contains($0) }
             .description
+        #if os(tvOS)
+        // Jellyfin groups active sessions by client and device ID. A physical
+        // vendor ID would merge accounts from otherwise isolated TV profiles.
+        let deviceID = "\(UIDevice.platform)_\(SystemProfileDeviceIdentity.identifier(in: .appSuite))"
+        #else
         let deviceID = "\(UIDevice.platform)_\(UIDevice.vendorUUIDString)"
+        #endif
         let version = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0.0.1"
 
         return .init(

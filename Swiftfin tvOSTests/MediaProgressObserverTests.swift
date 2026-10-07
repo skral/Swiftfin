@@ -67,7 +67,14 @@ final class MediaProgressObserverTests: XCTestCase {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [StopReportURLProtocol.self]
         session.client = JellyfinClient(
-            configuration: .init(url: url, client: "Tests", deviceName: "Tests", deviceID: "Tests", version: "1"),
+            configuration: .init(
+                url: url,
+                accessToken: "\(userID)-token",
+                client: "Tests",
+                deviceName: "Tests",
+                deviceID: "Tests",
+                version: "1"
+            ),
             sessionConfiguration: configuration
         )
         return session
@@ -109,6 +116,7 @@ final class MediaProgressObserverTests: XCTestCase {
         XCTAssertEqual(eventCount, 0)
         XCTAssertEqual(transport?.request.url?.path, "/Sessions/Playing/Stopped")
         XCTAssertEqual(transport?.request.url?.host, "origin-server.example")
+        XCTAssertTrue(transport?.request.value(forHTTPHeaderField: "Authorization")?.contains("origin-user-token") == true)
         let request = try XCTUnwrap(transport?.request)
         let body: Data
         if let data = request.httpBody {
@@ -160,6 +168,7 @@ final class MediaProgressObserverTests: XCTestCase {
         manager.seconds = .seconds(999)
         await fulfillment(of: [requested], timeout: 2)
         XCTAssertEqual(transport?.request.url?.host, "origin-server.example")
+        XCTAssertTrue(transport?.request.value(forHTTPHeaderField: "Authorization")?.contains("origin-user-token") == true)
         XCTAssertTrue(origins.isEmpty)
         transport?.succeed()
         await fulfillment(of: [published], timeout: 2)

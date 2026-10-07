@@ -80,6 +80,12 @@ extension Defaults.Keys {
 
     static let backgroundSignOutInterval: Key<TimeInterval> = AppKey("backgroundSignOutInterval", default: 3600)
     static let backgroundTimeStamp: Key<Date> = AppKey("backgroundTimeStamp", default: Date.now)
+    #if os(tvOS)
+    /// Completed only by an explicit, successful account selection in this
+    /// system profile. Never adopt the device-wide selection on upgrade.
+    static let tvosSystemProfileInitializedV1: Key<Bool> = AppKey("tvosSystemProfileInitializedV1", default: false)
+    #endif
+
     static let lastSignedInUserID: Key<UserSessionState> = AppKey("lastSignedInUserID", default: .signedOut)
     static let lastServerInformationRefreshDate: Key<Date> = AppKey("lastServerInformationRefreshDate", default: .distantPast)
 

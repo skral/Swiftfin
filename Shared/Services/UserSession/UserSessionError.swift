@@ -9,5 +9,6 @@
 enum UserSessionError: Error {
 
     case invalidStoredSession(userID: String)
+    case missingStoredCredentials(userID: String)
     case missingCurrentSession
 }

@@ -36,7 +36,7 @@ struct UserSessionRootView: View {
         }
         .animation(.linear(duration: 0.1), value: userSessionManager.state)
         .task {
-            await userSessionManager.start()
+            await userSessionManager.start(authenticationAction: authenticationAction)
         }
         .onOpenURL { url in
             guard let authenticationAction else { return }

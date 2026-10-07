@@ -29,7 +29,14 @@ extension ImagePipeline {
             components.queryItems = components.queryItems?.filter { $0.name != "maxWidth" }
         }
 
-        guard let newURL = components.url, let urlSHA = newURL.pathAndQuery?.sha1 else { return nil }
+        guard let newURL = components.url else { return nil }
+        #if os(tvOS)
+        // Different servers can expose identical item paths and image tags.
+        // Include the origin so their artwork cannot share a disk-cache key.
+        guard let urlSHA = newURL.absoluteString.sha1 else { return nil }
+        #else
+        guard let urlSHA = newURL.pathAndQuery?.sha1 else { return nil }
+        #endif
 
         if let maxWidthValue {
             return urlSHA + "-\(maxWidthValue)"
