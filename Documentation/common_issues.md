@@ -120,6 +120,22 @@ To resolve this issue, go to *Settings > Sign Out* then use the Add button to re
 
 ---
 
+## Apple TV System Profiles
+
+Swiftfin remembers a separate Jellyfin account for each Apple TV system profile. Select the adult system profile and sign in to its Jellyfin account, then select Kids and connect/sign in to the kids account. Returning to a configured system profile restores its selected account when its sign-out and local security settings allow it. Account-free Kids profiles require tvOS 26.2 or later.
+
+The first launch after upgrading to system-profile support asks you to choose an account explicitly. Existing accounts exposed in the current profile can be selected; an empty profile uses the normal server connection and sign-in screens. Swiftfin does not copy legacy SQLite accounts or credentials into another profile.
+
+To change the remembered Jellyfin account, sign out and select or add the desired account while that Apple TV profile is active. Explicit sign-out stays effective on subsequent launches. Sign out on close/background preferences still apply, and PIN-protected accounts require authentication before their home screen appears. If a saved token is missing, sign in again and choose Replace. If a required local PIN is missing, remove the saved account from that profile and add it again to create a new PIN.
+
+Apple intends profile switches to terminate and relaunch Swiftfin with the incoming profile's storage. On the tested tvOS 27 installation, automatic switching intermittently relaunched apps with another profile's storage, even in a minimal app without Jellyfin. Reinstallation did not reliably prevent recurrence. Switching during playback stops that player; it does not resume under the incoming account. A final progress report may be interrupted by system termination. Jellyfin controls each account's library access and parental restrictions; Apple TV's profile switcher is not a parental lock for Swiftfin.
+
+The verified manual workaround is to force-close Swiftfin **before** switching profiles, wait five seconds, switch the system profile from the Apple TV Home screen, then open Swiftfin with the remote. Confirm the Jellyfin account in Settings before browsing or playing. Closing the app after switching was insufficient in testing. This workaround passed repeated playback and profile-switch tests on the tested device; it does not establish that automatic switching is reliable on every tvOS installation.
+
+For manual acceptance with that workaround, test adult → new Kids → sign in as the kids Jellyfin user → adult → Kids. Confirm the account, libraries, Continue Watching, and Next Up each time. Repeat switches from a detail page, playback, and the background; confirm that playback does not resume as the other user. Test PIN prompts, explicit sign-out, and an upgrade over the same installed app identity. Play an episode under each account and return to Home to check that Next Up and Continue Watching refresh. Physical-device storage isolation, artwork separation, and account-free Kids behavior remain required acceptance checks.
+
+---
+
 ## Library and Media
 
 ### No Media After Signing In

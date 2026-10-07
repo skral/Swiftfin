@@ -257,7 +257,12 @@ final class UserSignInViewModel: ObservableObject {
         )
 
         if let evaluatedPinPolicy = evaluatedPolicy as? PinEvaluatedUserAccessPolicy {
-            guard user.state.state.pin == evaluatedPinPolicy.pin else {
+            guard let storedPin = Container.shared.keychainService().get("\(user.state.state.id)-pin"),
+                  storedPin.isNotEmpty
+            else {
+                throw UserSessionError.missingStoredCredentials(userID: user.state.state.id)
+            }
+            guard storedPin == evaluatedPinPolicy.pin else {
                 throw ErrorMessage(L10n.incorrectPinForUser(user.state.state.username))
             }
         }

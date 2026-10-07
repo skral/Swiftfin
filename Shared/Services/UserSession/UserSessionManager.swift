@@ -75,21 +75,41 @@ final class UserSessionManager: ObservableObject {
     }
 
     @MainActor
-    func start() async {
+    func start(authenticationAction: LocalUserAuthenticationAction? = nil) async {
         guard state == .initial else { return }
 
         do {
             if Defaults[.signOutOnClose] {
                 Defaults[.lastSignedInUserID] = .signedOut
             }
+            #if os(tvOS)
+            // A system-profile switch relaunches the process, so the existing
+            // background timeout must also be honored before restoration.
+            if Defaults[.signOutOnBackground],
+               Date.now.timeIntervalSince(Defaults[.backgroundTimeStamp]) > Defaults[.backgroundSignOutInterval]
+            {
+                Defaults[.lastSignedInUserID] = .signedOut
+            }
+            #endif
 
-            try await updateCurrentSession(with: resolveStoredSession())
+            let session = try resolveStoredSession()
+            #if os(tvOS)
+            if let session, session.user.accessPolicy != .none {
+                guard let authenticationAction else {
+                    throw AuthenticationError.missingAuthenticationAction
+                }
+                try await authenticate(user: session.user, authenticationAction: authenticationAction)
+            }
+            #endif
+            try Task.checkCancellation()
+            await updateCurrentSession(with: session)
         } catch {
             logger.error(
                 "Unable to restore launch session",
                 metadata: ["error": .string(error.localizedDescription)]
             )
 
+            Defaults[.lastSignedInUserID] = .signedOut
             await updateCurrentSession(with: nil)
         }
     }
@@ -97,20 +117,38 @@ final class UserSessionManager: ObservableObject {
     @MainActor
     private func refreshCurrentSession() async {
         do {
-            try await updateCurrentSession(with: resolveStoredSession())
+            let session = try resolveStoredSession()
+            #if os(tvOS)
+            // Foreground refresh may retain an authenticated session, but must
+            // never bypass startup authentication for a different account.
+            if let session, session.user.accessPolicy != .none,
+               currentSession?.user.id != session.user.id || currentSession?.server.id != session.server.id
+            {
+                throw AuthenticationError.missingAuthenticationAction
+            }
+            #endif
+            await updateCurrentSession(with: session)
         } catch {
             logger.error(
                 "Unable to refresh current user session",
                 metadata: ["error": .string(error.localizedDescription)]
             )
+            Defaults[.lastSignedInUserID] = .signedOut
             await updateCurrentSession(with: nil)
         }
     }
 
     @MainActor
     func signIn(userID: String) async throws {
+        // Existing selection/sign-in flows have already authenticated locally.
+        // Validate credentials before persisting the current profile's choice.
+        let session = try storedSession(userID: userID)
+        try Task.checkCancellation()
         Defaults[.lastSignedInUserID] = .signedIn(userID: userID)
-        try await updateCurrentSession(with: resolveStoredSession())
+        await updateCurrentSession(with: session)
+        #if os(tvOS)
+        Defaults[.tvosSystemProfileInitializedV1] = true
+        #endif
 
         Task {
             await refreshServerInformationIfNeeded(reason: .explicitSignIn)
@@ -119,9 +157,8 @@ final class UserSessionManager: ObservableObject {
 
     @MainActor
     func signOut(reason: SignOutReason) async {
-        guard currentSession != nil else { return }
-
         Defaults[.lastSignedInUserID] = .signedOut
+        guard currentSession != nil else { return }
         await refreshCurrentSession()
 
         logger.info(
@@ -192,6 +229,10 @@ final class UserSessionManager: ObservableObject {
 
     @MainActor
     func appWillEnterForeground() async {
+        #if os(tvOS)
+        // Startup owns the first-use and local-authentication gates.
+        guard state != .initial else { return }
+        #endif
         await refreshCurrentSession()
 
         Task {
@@ -236,9 +277,12 @@ final class UserSessionManager: ObservableObject {
             reason: user.accessPolicy.authenticateReason(user: user)
         )
 
-        guard let pinPolicy = evaluatedPolicy as? PinEvaluatedUserAccessPolicy else { return }
-
-        if let storedPin = keychain.get("\(user.id)-pin") {
+        if user.accessPolicy == .requirePin {
+            guard let pinPolicy = evaluatedPolicy as? PinEvaluatedUserAccessPolicy,
+                  let storedPin = keychain.get("\(user.id)-pin"), storedPin.isNotEmpty
+            else {
+                throw UserSessionError.missingStoredCredentials(userID: user.id)
+            }
             guard pinPolicy.pin == storedPin else {
                 throw ErrorMessage(L10n.incorrectPinForUser(user.username))
             }
@@ -323,21 +367,40 @@ final class UserSessionManager: ObservableObject {
     }
 
     private func resolveStoredSession() throws -> UserSession? {
-        guard case let .signedIn(userId) = Defaults[.lastSignedInUserID] else { return nil }
-
-        guard let user = StoredValues[.User.users].first(where: { $0.id == userId }) else {
+        #if os(tvOS)
+        guard Defaults[.tvosSystemProfileInitializedV1] else {
             Defaults[.lastSignedInUserID] = .signedOut
-            throw UserSessionError.invalidStoredSession(userID: userId)
+            return nil
+        }
+        #endif
+        guard case let .signedIn(userID) = Defaults[.lastSignedInUserID] else { return nil }
+        return try storedSession(userID: userID)
+    }
+
+    private func storedSession(userID: String) throws -> UserSession {
+        guard let user = StoredValues[.User.users].first(where: { $0.id == userID }) else {
+            Defaults[.lastSignedInUserID] = .signedOut
+            throw UserSessionError.invalidStoredSession(userID: userID)
         }
 
         guard let server = StoredValues[.Server.servers].first(where: { $0.id == user.serverID }) else {
             Defaults[.lastSignedInUserID] = .signedOut
-            throw UserSessionError.invalidStoredSession(userID: userId)
+            throw UserSessionError.invalidStoredSession(userID: userID)
         }
 
-        return .init(
-            server: server,
-            user: user
-        )
+        guard let token = keychain.get("\(user.id)-accessToken"), token.isNotEmpty else {
+            throw UserSessionError.missingStoredCredentials(userID: user.id)
+        }
+        if user.accessPolicy == .requirePin {
+            guard let pin = keychain.get("\(user.id)-pin"), pin.isNotEmpty else {
+                throw UserSessionError.missingStoredCredentials(userID: user.id)
+            }
+        }
+
+        let session = UserSession(server: server, user: user)
+        // Bind this session's client while its validated credentials are present,
+        // before asynchronous services or pending reports can outlive sign-out.
+        _ = session.client
+        return session
     }
 }
