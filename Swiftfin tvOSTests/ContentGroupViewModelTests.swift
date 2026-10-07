@@ -132,15 +132,15 @@ final class ContentGroupViewModelTests: XCTestCase {
     }
 
     private func nextIDs(_ home: ContentGroupViewModel<HomeRefreshProvider>) -> [String?] {
-        home.groups.compactMap { $0 as? PosterGroup<NextUpLibrary> }.first?.viewModel.elements.map(\.id) ?? []
+        home.groups.compactMap { $0 as? CinematicSelectionContentGroup }.first?.viewModel.elements.map(\.id) ?? []
     }
 
-    private func home(showRecentlyAdded: Bool = true) async -> ContentGroupViewModel<HomeRefreshProvider> {
+    private func home(showRecentlyAdded: Bool = true, resumeItems: String = "[]") async -> ContentGroupViewModel<HomeRefreshProvider> {
         Defaults[.Customization.Home.showRecentlyAdded] = showRecentlyAdded
         HomeRefreshURLProtocol.nextUp = "episode-3"
         HomeRefreshURLProtocol.nextUpRequests = 0
         HomeRefreshURLProtocol.resumeRequests = 0
-        HomeRefreshURLProtocol.resumeItems = "[]"
+        HomeRefreshURLProtocol.resumeItems = resumeItems
         HomeRefreshURLProtocol.recentlyAddedItems = "[{\"Id\":\"fallback\",\"Type\":\"Movie\"}]"
         HomeRefreshURLProtocol.onNextUp = nil
         let url = URL(string: "https://home.example")!
@@ -158,7 +158,10 @@ final class ContentGroupViewModelTests: XCTestCase {
         provider.userSession = session
         let groups = try! await provider.makeGroups(environment: Empty())
         for group in groups {
-            if let next = group as? PosterGroup<NextUpLibrary> { next.viewModel.userSession = session }
+            if let next = group as? CinematicSelectionContentGroup { next.viewModel.userSession = session
+                next.viewModel.resumeViewModel.userSession = session
+                next.viewModel.nextUpViewModel.userSession = session
+            }
             if let recommended = group as? PosterGroup<RecommendedProgramsLibrary> { recommended.viewModel.userSession = session }
             if let recent = group as? PosterGroup<ItemLibrary> { recent.viewModel.userSession = session }
             if let recent = group as? PosterGroup<RecentlyAddedLibrary> { recent.viewModel.userSession = session }
@@ -169,17 +172,46 @@ final class ContentGroupViewModelTests: XCTestCase {
         return home
     }
 
-    func testHomeStartsWithNextUpAndRecentlyAddedFollows() async {
+    func testHomeStartsWithCinematicNextUpAndRecentlyAddedFollows() async {
         let home = await home()
-        XCTAssertTrue(home.groups.first is PosterGroup<NextUpLibrary>)
+        XCTAssertTrue(home.groups.first is CinematicSelectionContentGroup)
         XCTAssertTrue(home.groups.dropFirst().first is PosterGroup<RecentlyAddedLibrary>)
-        XCTAssertFalse(home.provider.content.contains { $0 is CinematicSelectionContentGroup })
-        XCTAssertEqual(HomeRefreshURLProtocol.resumeRequests, 0)
+        XCTAssertFalse(home.provider.content.contains { $0 is PosterGroup<NextUpLibrary> })
+        XCTAssertEqual(nextIDs(home), ["episode-3"])
+        XCTAssertEqual(HomeRefreshURLProtocol.resumeRequests, 1)
+    }
+
+    func testCarouselCombinesContinueWatchingAndNextUpWithoutDuplicates() async {
+        let home =
+            await home(
+                resumeItems: "[{\"Id\":\"movie\",\"Type\":\"Movie\",\"UserData\":{\"Key\":\"movie\",\"PlaybackPositionTicks\":100}},{\"Id\":\"episode-3\",\"Type\":\"Episode\"}]"
+            )
+        XCTAssertEqual(nextIDs(home), ["movie", "episode-3"])
+        let cinematic = home.groups.first as? CinematicSelectionContentGroup
+        XCTAssertEqual(cinematic?.viewModel.elements.first?.userData?.playbackPositionTicks, 100)
+        XCTAssertFalse(nextIDs(home).contains("fallback"))
+    }
+
+    func testContinueWatchingRemainsWhenNextUpIsEmptyAndRefreshesProgress() async {
+        let home =
+            await home(
+                resumeItems: "[{\"Id\":\"movie\",\"Type\":\"Movie\",\"UserData\":{\"Key\":\"movie\",\"PlaybackPositionTicks\":100}}]"
+            )
+        home.didAppear()
+        HomeRefreshURLProtocol.nextUp = ""
+        HomeRefreshURLProtocol.resumeItems = "[{\"Id\":\"movie\",\"Type\":\"Movie\",\"UserData\":{\"Key\":\"movie\",\"PlaybackPositionTicks\":200}}]"
+        Notifications[.didSendStopReport].post(origin)
+        await settle(home)
+        XCTAssertTrue(home.groups.first is CinematicSelectionContentGroup)
+        XCTAssertEqual(nextIDs(home), ["movie"])
+        let cinematic = home.groups.first as? CinematicSelectionContentGroup
+        XCTAssertEqual(cinematic?.viewModel.elements.first?.userData?.playbackPositionTicks, 200)
+        XCTAssertEqual(HomeRefreshURLProtocol.resumeRequests, 2)
     }
 
     func testRecentlyAddedSettingHidesRowWithoutChangingNextUp() async {
         let home = await home(showRecentlyAdded: false)
-        XCTAssertTrue(home.groups.first is PosterGroup<NextUpLibrary>)
+        XCTAssertTrue(home.groups.first is CinematicSelectionContentGroup)
         XCTAssertFalse(home.provider.content.contains { $0 is PosterGroup<RecentlyAddedLibrary> })
         XCTAssertEqual(nextIDs(home), ["episode-3"])
     }
@@ -191,7 +223,7 @@ final class ContentGroupViewModelTests: XCTestCase {
         Notifications[.didSendStopReport].post(PlaybackStopReportOrigin(serverID: "server", userID: "user"))
         home.refreshIfNeeded(sinceLastDisappear: 10)
         await settle(home)
-        let next = home.groups.compactMap { $0 as? PosterGroup<NextUpLibrary> }.first
+        let next = home.groups.compactMap { $0 as? CinematicSelectionContentGroup }.first
         XCTAssertEqual(next?.viewModel.elements.first?.id, "episode-4")
         XCTAssertEqual(HomeRefreshURLProtocol.nextUpRequests, 2)
     }
@@ -275,13 +307,13 @@ final class ContentGroupViewModelTests: XCTestCase {
         Notifications[.didSendStopReport].post(origin)
         await settle(home, minimumRequests: 3)
         XCTAssertEqual(nextIDs(home), ["episode-4"])
-        XCTAssertTrue(home.groups.first is PosterGroup<NextUpLibrary>)
+        XCTAssertTrue(home.groups.first is CinematicSelectionContentGroup)
         HomeRefreshURLProtocol.recentlyAddedItems = "[]"
         Notifications[.didSendStopReport].post(origin)
         await settle(home, minimumRequests: 4)
         XCTAssertTrue(recent.viewModel.elements.isEmpty)
         XCTAssertFalse(home.groups.contains { $0 is PosterGroup<RecentlyAddedLibrary> })
-        XCTAssertEqual(HomeRefreshURLProtocol.resumeRequests, 0)
+        XCTAssertEqual(HomeRefreshURLProtocol.resumeRequests, 4)
     }
 
     func testSignalDuringOrdinaryRefreshRunsTrailingPassWithoutParallelRetrieval() async {
@@ -323,6 +355,10 @@ final class ContentGroupViewModelTests: XCTestCase {
         home.userSession = replacement
         for group in home.provider.content {
             (group.viewModel as? ViewModel)?.userSession = replacement
+            if let cinematic = group as? CinematicSelectionContentGroup {
+                cinematic.viewModel.resumeViewModel.userSession = replacement
+                cinematic.viewModel.nextUpViewModel.userSession = replacement
+            }
         }
         HomeRefreshURLProtocol.nextUp = "new-session-item"
         Notifications[.didSendStopReport].post(origin)
@@ -336,7 +372,7 @@ final class ContentGroupViewModelTests: XCTestCase {
     func testCanceledChildLeavesChangePendingForNextReturn() async throws {
         let home = await home()
         home.didAppear()
-        let next = try XCTUnwrap(home.provider.content.compactMap { $0 as? PosterGroup<NextUpLibrary> }.first)
+        let next = try XCTUnwrap(home.provider.content.compactMap { $0 as? CinematicSelectionContentGroup }.first)
         let requested = expectation(description: "Cancelable child retrieval")
         var transport: HomeRefreshURLProtocol?
         HomeRefreshURLProtocol.onNextUp = { request in transport = request
@@ -345,7 +381,7 @@ final class ContentGroupViewModelTests: XCTestCase {
         HomeRefreshURLProtocol.nextUp = "episode-4"
         Notifications[.didSendStopReport].post(origin)
         await fulfillment(of: [requested], timeout: 2)
-        next.viewModel.core.cancelAll()
+        next.viewModel.nextUpViewModel.core.cancelAll()
         HomeRefreshURLProtocol.onNextUp = nil
         transport?.succeed()
         await settle(home)
